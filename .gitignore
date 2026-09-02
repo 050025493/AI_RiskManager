@@ -1,8 +1,9 @@
 1.py
 
 train_identity.csv
-train_transaction_optimized.parquet
+
 train_transaction.csv
-pr_curve.png
+
 .vscode
 
+.pytest_cache

@@ -1,8 +1,10 @@
 import { useState } from "react";
 
 import Sidebar from "./components/sidebar";
-import Dashboard from "./pages/Dashboard";
+import Dashboard from "./pages/dashboard";
+import AlertQueue from "./pages/alert";
 import ModelPerformance from "./pages/modelperformance";
+import Settings from "./pages/settings";
 
 function App() {
   const [activePage, setActivePage] = useState("Dashboard");
@@ -19,23 +21,13 @@ function App() {
 
         {activePage === "Dashboard" && <Dashboard />}
 
-        {/* You will connect these pages later */}
-
-        {activePage === "Alert Queue" && (
-          <div className="p-10 text-white">
-            Alert Queue Page
-          </div>
-        )}
+        {activePage === "Alert Queue" && <AlertQueue />}
 
         {activePage === "Model Performance" && <ModelPerformance/>
           
         }
 
-        {activePage === "Settings" && (
-          <div className="p-10 text-white">
-            Settings Page
-          </div>
-        )}
+        {activePage === "Settings" && <Settings />}
 
       </div>
 
