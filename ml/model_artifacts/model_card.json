@@ -1,0 +1,30 @@
+{
+  "model_type": "XGBoost (depth=12, early stopping)",
+  "params": {
+    "max_depth": 12,
+    "learning_rate": 0.03,
+    "scale_pos_weight": 10,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "tree_method": "hist",
+    "best_iteration": 3949
+  },
+  "metrics": {
+    "test_pr_auc": 0.5526,
+    "test_roc_auc_reference_only": 0.9048,
+    "val_pr_auc": 0.6857,
+    "baseline_test_pr_auc": 0.4948
+  },
+  "chosen_operating_point": {
+    "threshold": 0.785,
+    "assumed_fp_review_cost_inr": 50,
+    "note": "Sensitive to FP-cost assumption \u2014 see sensitivity table in dashboard/README."
+  },
+  "known_limitations": [
+    "Model under-weights large-ticket fraud relative to small-ticket behavioral fraud",
+    "Cold-start UIDs (no prior history) have degraded velocity features",
+    "Trained on public IEEE-CIS data, not live Razorpay traffic"
+  ],
+  "feature_set": "Baseline (271 features) \u2014 no UID/velocity/entity engineering",
+  "notes": "UID-based entity and velocity features (transaction frequency, spend, time-since-last, target-encoded email domain) were implemented and leakage-tested (past-only, expanding encoding), but underperformed the tuned baseline on held-out test PR-AUC. The champion model uses the baseline feature set with tuned hyperparameters (depth=12, more estimators). Kept as documented future work \u2014 see README."
+}
