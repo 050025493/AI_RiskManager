@@ -2,11 +2,16 @@ import {
   LayoutDashboard,
   BellRing,
   ChartNoAxesCombined,
+  Menu,
+  X,
   Settings,
   ShieldCheck,
+  FlaskConical,
 } from "lucide-react";
+import { useState } from "react";
 
 function Sidebar({ activePage, setActivePage }) {
+  const [isOpen, setIsOpen] = useState(false);
   const navItems = [
     {
       name: "Dashboard",
@@ -24,10 +29,40 @@ function Sidebar({ activePage, setActivePage }) {
       name: "Settings",
       icon: Settings,
     },
+    {
+      name: "Test Transactions",
+      icon: FlaskConical,
+    },
   ];
 
+  const navigateTo = (page) => {
+    setActivePage(page);
+    setIsOpen(false);
+  };
+
   return (
-    <aside className="flex min-h-screen w-[17rem] flex-col border-r-2 border-[#27272f] bg-[#0b0b0f] text-white">
+    <>
+      <div className="fixed inset-x-0 top-0 z-40 flex h-16 items-center justify-between border-b-2 border-[#27272f] bg-[#0b0b0f] px-4 text-white md:hidden">
+        <div className="flex items-center gap-3">
+          <div className="flex h-9 w-9 items-center justify-center border-2 border-black bg-[#46ef46] text-black shadow-[3px_3px_0px_#ffffff]">
+            <ShieldCheck size={19} strokeWidth={2.5} />
+          </div>
+          <span className="font-display text-base">RiskEngine</span>
+        </div>
+        <button
+          type="button"
+          aria-label={isOpen ? "Close navigation" : "Open navigation"}
+          aria-expanded={isOpen}
+          onClick={() => setIsOpen((open) => !open)}
+          className="flex h-10 w-10 items-center justify-center border-2 border-[#27272f] bg-[#15151c] text-white"
+        >
+          {isOpen ? <X size={22} /> : <Menu size={22} />}
+        </button>
+      </div>
+
+      {isOpen && <button type="button" aria-label="Close navigation" onClick={() => setIsOpen(false)} className="fixed inset-0 z-40 bg-black/70 md:hidden" />}
+
+      <aside className={`fixed inset-y-0 left-0 z-50 flex w-[17rem] flex-col border-r-2 border-[#27272f] bg-[#0b0b0f] text-white transition-transform duration-200 md:sticky md:top-0 md:min-h-screen md:translate-x-0 ${isOpen ? "translate-x-0" : "-translate-x-full"}`}>
       
       {/* ================= LOGO ================= */}
       <div className="border-b-2 border-[#27272f] px-6 py-7">
@@ -67,7 +102,7 @@ function Sidebar({ activePage, setActivePage }) {
             return (
               <button
                 key={item.name}
-                onClick={() => setActivePage(item.name)}
+                onClick={() => navigateTo(item.name)}
                 className={`flex w-full items-center gap-3 border-2 px-4 py-3.5 text-left font-body text-sm font-semibold transition-all duration-200
                   
                   ${
@@ -120,7 +155,8 @@ function Sidebar({ activePage, setActivePage }) {
 
       </div>
 
-    </aside>
+      </aside>
+    </>
   );
 }
 

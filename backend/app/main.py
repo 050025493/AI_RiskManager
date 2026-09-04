@@ -1,14 +1,22 @@
 import logging
 from collections import Counter
+from pathlib import Path
 
 import numpy as np
+import pandas as pd
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import AnyHttpUrl, BaseModel
 from .metrics import load_metrics
 from .audit_log import record_prediction, get_audit_logs, update_alert
-from .model_loader import prepare_features, preprocessor, model
+from .model_loader import prepare_features, preprocessor, model, feature_order
 from .shap_explainer import explain_transaction
+from .push_service import delete_subscription, save_subscription, send_high_risk_alert
+from .supabase_store import is_configured, store_prediction
+
+
+load_dotenv()
 
 
 app = FastAPI(
@@ -19,12 +27,15 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1):\d+",
-    allow_methods=["GET", "POST", "PATCH"],
+    allow_origin_regex=r"https?://.*",
+    allow_methods=["GET", "POST", "PATCH", "DELETE"],
     allow_headers=["*"],
 )
 
 logger = logging.getLogger("uvicorn.error")
+ROOT = Path(__file__).resolve().parents[2]
+TEST_DATA_DIR = ROOT / "ml" / "data" / "testing"
+_test_transactions = None
 
 
 class TransactionRequest(BaseModel):
@@ -37,12 +48,115 @@ class AlertReviewRequest(BaseModel):
     decision: str | None = None
 
 
+class PushSubscriptionKeys(BaseModel):
+    p256dh: str
+    auth: str
+
+
+class PushSubscriptionRequest(BaseModel):
+    endpoint: AnyHttpUrl
+    expirationTime: int | float | None = None
+    keys: PushSubscriptionKeys
+
+
+class PushSubscriptionEnvelope(BaseModel):
+    subscription: PushSubscriptionRequest
+
+
+class PushSubscriptionDeleteRequest(BaseModel):
+    endpoint: AnyHttpUrl
+
+
 def get_risk_level(score: float) -> str:
     if score >= 0.70:
         return "HIGH"
     if score >= 0.30:
         return "MEDIUM"
     return "LOW"
+
+
+def load_test_transactions():
+    global _test_transactions
+
+    if _test_transactions is None:
+        transaction_file = TEST_DATA_DIR / "test_transaction.csv"
+        identity_file = TEST_DATA_DIR / "test_identity.csv"
+        if not transaction_file.exists() or not identity_file.exists():
+            raise FileNotFoundError("IEEE-CIS test transaction and identity files are required.")
+
+        transactions = pd.read_csv(transaction_file)
+        identity = pd.read_csv(identity_file)
+        identity = identity.rename(columns=lambda column: column.replace("-", "_"))
+        identity_ids = set(identity["TransactionID"])
+        merged = transactions.merge(identity, on="TransactionID", how="left")
+        merged["has_identity"] = merged["TransactionID"].isin(identity_ids).astype(np.int8)
+
+        identity_numeric_columns = [
+            column
+            for column in identity.select_dtypes(include=["number"]).columns
+            if column != "TransactionID"
+        ]
+        for column in identity_numeric_columns:
+            merged[f"{column}_was_missing"] = merged[column].isnull().astype(np.int8)
+
+        _test_transactions = merged
+
+    return _test_transactions
+
+
+def json_safe(value):
+    if pd.isna(value):
+        return None
+    if isinstance(value, np.generic):
+        return value.item()
+    return value
+
+
+def predict_and_record(transaction_id, transaction):
+    X = prepare_features(transaction)
+    X_processed = preprocessor.transform(X)
+    probability = model.predict_proba(X_processed)[0, 1]
+    risk_score = float(np.clip(probability, 0.0, 1.0))
+    risk_level = get_risk_level(risk_score)
+    reasons = explain_transaction(X_processed, top_k=3)
+    action = "REVIEW" if risk_level != "LOW" else "MONITOR"
+
+    record_prediction(
+        transaction_id=transaction_id,
+        risk_score=risk_score,
+        risk_level=risk_level,
+        action=action,
+        reasons=reasons,
+        amount=transaction.get("TransactionAmt"),
+    )
+    storage = store_prediction(
+        transaction_id=transaction_id,
+        transaction=transaction,
+        risk_score=risk_score,
+        risk_level=risk_level,
+        action=action,
+        reasons=reasons,
+    )
+    if is_configured() and not storage["stored"]:
+        raise RuntimeError(storage["reason"])
+
+    if risk_level == "HIGH":
+        send_high_risk_alert({
+            "transaction_id": transaction_id,
+            "risk_score": risk_score,
+            "risk_level": risk_level,
+            "action": action,
+            "reasons": reasons,
+        })
+
+    return {
+        "transaction_id": str(transaction_id),
+        "risk_score": round(risk_score, 6),
+        "risk_level": risk_level,
+        "action": action,
+        "reasons": reasons,
+        "storage": storage,
+    }
 
 
 @app.get("/health")
@@ -53,35 +167,99 @@ def health():
     }
 
 
+@app.post("/push-subscriptions", status_code=201)
+def register_push_subscription(request: PushSubscriptionEnvelope):
+    subscription = request.subscription.dict(exclude_none=True)
+    subscription["endpoint"] = str(subscription["endpoint"])
+    save_subscription(subscription)
+    return {"registered": True}
+
+
+@app.delete("/push-subscriptions")
+def unregister_push_subscription(request: PushSubscriptionDeleteRequest):
+    return {"removed": delete_subscription(str(request.endpoint))}
+
+
+@app.post("/push-test")
+def push_test():
+    result = send_high_risk_alert({
+        "transaction_id": "TEST-001",
+        "risk_score": 0.99,
+        "risk_level": "HIGH",
+        "action": "REVIEW",
+        "reasons": [],
+    })
+
+    return result
+
+
+@app.get("/test-transactions")
+def get_test_transactions(limit: int = 20):
+    if limit < 1 or limit > 100:
+        raise HTTPException(status_code=400, detail="Limit must be between 1 and 100.")
+
+    try:
+        test_data = load_test_transactions().head(limit)
+        rows = []
+        for _, row in test_data.iterrows():
+            rows.append({
+                "transaction_id": int(row["TransactionID"]),
+                "amount": json_safe(row.get("TransactionAmt")),
+                "has_identity": bool(row["has_identity"]),
+            })
+        return {"count": len(rows), "transactions": rows}
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/test-transactions/analyze")
+def analyze_test_transactions(offset: int = 0, limit: int = 25):
+    if offset < 0 or limit < 1 or limit > 100:
+        raise HTTPException(status_code=400, detail="Offset must be non-negative and limit must be between 1 and 100.")
+
+    try:
+        test_data = load_test_transactions().iloc[offset:offset + limit]
+        results = []
+        for _, row in test_data.iterrows():
+            transaction_id = int(row["TransactionID"])
+            transaction = {
+                feature: json_safe(row[feature])
+                for feature in feature_order
+            }
+            results.append(predict_and_record(transaction_id, transaction))
+        return {
+            "offset": offset,
+            "count": len(results),
+            "results": results,
+        }
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/test-transactions/{transaction_id}/predict")
+def predict_test_transaction(transaction_id: int):
+    try:
+        test_data = load_test_transactions()
+        matching_rows = test_data[test_data["TransactionID"] == transaction_id]
+        if matching_rows.empty:
+            raise HTTPException(status_code=404, detail="Test transaction not found.")
+
+        row = matching_rows.iloc[0]
+        transaction = {
+            feature: json_safe(row[feature])
+            for feature in feature_order
+        }
+        return predict_and_record(transaction_id, transaction)
+    except HTTPException:
+        raise
+    except (FileNotFoundError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.post("/predict")
 def predict_transaction(request: TransactionRequest):
     try:
-        X = prepare_features(request.transaction)
-        X_processed = preprocessor.transform(X)
-
-        probability = model.predict_proba(X_processed)[0, 1]
-        risk_score = float(np.clip(probability, 0.0, 1.0))
-        risk_level = get_risk_level(risk_score)
-
-        reasons = explain_transaction(X_processed, top_k=3)
-
-        action = "REVIEW" if risk_level != "LOW" else "MONITOR"
-
-        record_prediction(
-            transaction_id=request.transaction_id,
-            risk_score=risk_score,
-            risk_level=risk_level,
-            action=action,
-            reasons=reasons,
-            amount=request.transaction.get("TransactionAmt"),
-        )
-
-        return {
-            "risk_score": round(risk_score, 6),
-            "risk_level": risk_level,
-            "action": action,
-            "reasons": reasons,
-        }
+        return predict_and_record(request.transaction_id, request.transaction)
 
     except ValueError as exc:
         raise HTTPException(

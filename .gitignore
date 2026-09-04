@@ -7,3 +7,7 @@ train_transaction.csv
 .vscode
 
 .pytest_cache
+.env
+backend/.env
+backend/logs/push_subscriptions.json
+testing
