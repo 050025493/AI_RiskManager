@@ -1,12 +1,42 @@
 import { Bell, Database, Save, ShieldCheck, SlidersHorizontal } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+
+import { disableNotifications, enableNotifications, getNotificationStatus } from "../services/notification";
 
 function Settings() {
   const [threshold, setThreshold] = useState("0.50");
   const [reviewCost, setReviewCost] = useState("50");
   const [missedFraudCost, setMissedFraudCost] = useState("100");
-  const [notifications, setNotifications] = useState(true);
+  const [notifications, setNotifications] = useState(false);
+  const [notificationStatus, setNotificationStatus] = useState("Checking notification status...");
+  const [notificationError, setNotificationError] = useState("");
   const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    getNotificationStatus()
+      .then((status) => {
+        setNotifications(status === "enabled");
+        setNotificationStatus(status === "enabled" ? "Notifications are enabled on this device." : "Notifications are currently disabled.");
+      })
+      .catch((error) => setNotificationError(error.message));
+  }, []);
+
+  const handleNotificationChange = async (enabled) => {
+    setNotificationError("");
+    try {
+      if (enabled) {
+        await enableNotifications();
+        setNotifications(true);
+        setNotificationStatus("Notifications are enabled on this device.");
+      } else {
+        await disableNotifications();
+        setNotifications(false);
+        setNotificationStatus("Notifications are currently disabled.");
+      }
+    } catch (error) {
+      setNotificationError(error.message);
+    }
+  };
 
   const saveSettings = (event) => {
     event.preventDefault();
@@ -35,7 +65,7 @@ function Settings() {
           </SettingsSection>
 
           <SettingsSection icon={<Bell size={22} />} eyebrow="Operator Experience" title="Notifications" color="text-[#d946ef]">
-            <label className="flex cursor-pointer items-center justify-between gap-6 border-2 border-[#27272f] bg-[#0f0f14] p-5"><span><span className="block font-body text-base font-bold">Alert notifications</span><span className="mt-1 block font-body text-sm text-zinc-500">Show notification status when new review alerts arrive.</span></span><input type="checkbox" checked={notifications} onChange={(event) => setNotifications(event.target.checked)} className="h-5 w-5 accent-[#d946ef]" /></label>
+            <label className="flex cursor-pointer items-center justify-between gap-6 border-2 border-[#27272f] bg-[#0f0f14] p-5"><span><span className="block font-body text-base font-bold">Alert notifications</span><span className="mt-1 block font-body text-sm text-zinc-500">Show notification status when new review alerts arrive.</span><span className={`mt-2 block font-body text-sm ${notificationError ? "text-[#ff4d4d]" : "text-[#d946ef]"}`}>{notificationError || notificationStatus}</span></span><input type="checkbox" checked={notifications} onChange={(event) => handleNotificationChange(event.target.checked)} className="h-5 w-5 accent-[#d946ef]" /></label>
           </SettingsSection>
 
           <div className="flex flex-wrap items-center gap-4 border-t-2 border-[#27272f] pt-7"><button type="submit" className="flex items-center gap-2 border-2 border-black bg-[#c7ff3d] px-5 py-3 font-body text-sm font-bold text-black shadow-[4px_4px_0px_#ffffff] transition hover:-translate-x-0.5 hover:-translate-y-0.5"><Save size={18} /> Save Settings</button>{saved && <span className="font-body text-sm font-bold text-[#c7ff3d]">Settings saved for this session.</span>}</div>

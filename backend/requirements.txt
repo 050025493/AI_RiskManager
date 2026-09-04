@@ -1,0 +1,10 @@
+fastapi
+numpy
+pandas
+pyarrow
+pywebpush
+python-dotenv
+scikit-learn
+shap
+supabase
+uvicorn
